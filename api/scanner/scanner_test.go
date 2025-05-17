@@ -69,6 +69,7 @@ func TestFullScan(t *testing.T) {
 	}
 	wantHighresImages := []string{
 		"heif.heif",
+		"heic.heic",
 		"jpg2000.jp2",
 		"raw_with_file.tiff",
 		"raw_with_jpg.tiff",
