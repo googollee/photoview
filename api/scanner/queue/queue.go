@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -135,8 +136,8 @@ func (q *Queue) findUserAlbumsJobs(user *models.User) ([]*queueJob, error) {
 	log.Info(q.ctx, "find job for user", "user", user.ID)
 	albumCache := scanner_cache.MakeAlbumCache()
 	albums, album_errors := scanner.FindAlbumsForUser(q.db, user, albumCache)
-	if len(album_errors) != 0 {
-		return nil, Errors(album_errors)
+	if err := errors.Join(album_errors...); err != nil {
+		return nil, fmt.Errorf("find user(%d) album error: %w", user.ID, err)
 	}
 
 	jobs := make([]*queueJob, 0, len(albums))

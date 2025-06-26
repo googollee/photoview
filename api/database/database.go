@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -204,10 +205,16 @@ func MigrateDatabase(db *gorm.DB) error {
 }
 
 func ClearDatabase(db *gorm.DB) error {
+	var errs []error
+
 	for _, model := range database_models {
 		if err := db.Migrator().DropTable(model); err != nil {
-			return fmt.Errorf("drop table %T error: %w", model, err)
+			errs = append(errs, err)
 		}
+	}
+
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("drop table error: %w", err)
 	}
 
 	return nil
