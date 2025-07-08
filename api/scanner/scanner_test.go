@@ -118,7 +118,14 @@ func TestFullScan(t *testing.T) {
 		got := make([]string, len(allMedia))
 		for i, media := range allMedia {
 			got[i] = media.Title
+
+			if media.Type == models.MediaTypePhoto {
+				if media.Blurhash == nil || *media.Blurhash == "" {
+					t.Errorf("media %s doesn't have blurhash", media.Title)
+				}
+			}
 		}
+
 		slices.Sort(got)
 
 		if diff := cmp.Diff(got, want); diff != "" {
@@ -173,18 +180,14 @@ func TestFullScan(t *testing.T) {
 	})
 
 	t.Run("CheckFaceGroup", func(t *testing.T) {
-		ctx, done := context.WithTimeout(t.Context(), time.Second*5)
-		defer done()
+		var allFaceGroups []*models.FaceGroup
+		if err := db.Find(&allFaceGroups).Error; err != nil {
+			t.Fatal("get face groups error:", err)
+		}
 
-		waitFor(ctx, t, time.Second/2, func() bool {
-			var allFaceGroups []*models.FaceGroup
-			if err := db.Find(&allFaceGroups).Error; err != nil {
-				t.Fatal("get face groups error:", err)
-				return false
-			}
-
-			return len(allFaceGroups) == len(wantFaceGroups)
-		})
+		if got, want := len(allFaceGroups), len(wantFaceGroups); got != want {
+			t.Errorf("len(allFaceGroups) = %d, len(wantFaceGroups) = %d, they should be equal", got, want)
+		}
 	})
 
 	t.Run("CheckFaces", func(t *testing.T) {
