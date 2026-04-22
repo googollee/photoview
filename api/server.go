@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,15 +9,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
-
 	"github.com/joho/godotenv"
 
 	"github.com/photoview/photoview/api/database"
 	"github.com/photoview/photoview/api/dataloader"
+	"github.com/photoview/photoview/api/globalinit"
 	"github.com/photoview/photoview/api/graphql/auth"
 	graphql_endpoint "github.com/photoview/photoview/api/graphql/endpoint"
+	"github.com/photoview/photoview/api/log"
 	"github.com/photoview/photoview/api/routes"
 	"github.com/photoview/photoview/api/scanner/externaltools/exif"
 	"github.com/photoview/photoview/api/scanner/face_detection"
@@ -27,15 +28,21 @@ import (
 	"github.com/photoview/photoview/api/scanner/scanner_queue"
 	"github.com/photoview/photoview/api/server"
 	"github.com/photoview/photoview/api/utils"
-
-	"github.com/99designs/gqlgen/graphql/playground"
 )
 
 func main() {
-	log.Println("Starting Photoview...")
+	ctx := context.Background()
+
+	log.Info(ctx, "Starting Photoview...")
 
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found. If Photoview runs in Docker, this is expected and correct.")
+		log.Warn(ctx, "No .env file found. If Photoview runs in Docker, this is expected and correct.")
+	}
+
+	terminate, err := globalinit.Initialize(ctx)
+	defer terminate(ctx)
+	if err != nil {
+		log.Error(ctx, "initialize error", "errors", err)
 	}
 
 	terminateWorkers := executable_worker.Initialize()
@@ -45,30 +52,36 @@ func main() {
 
 	db, err := database.SetupDatabase()
 	if err != nil {
-		log.Panicf("Could not connect to database: %s\n", err)
+		log.Error(ctx, "Could not connect to database", "error", err)
+		os.Exit(255)
 	}
 
 	// Migrate database
 	if err := database.MigrateDatabase(db); err != nil {
-		log.Panicf("Could not migrate database: %s\n", err)
+		log.Error(ctx, "Could not migrate database", "error", err)
+		os.Exit(255)
 	}
 
 	exifCleanup, err := exif.Initialize()
 	if err != nil {
-		log.Panicf("Could not initialize exif parser: %s", err)
+		log.Error(ctx, "Could not initialize exif parser", "error", err)
+		os.Exit(255)
 	}
 	defer exifCleanup()
 
 	if err := scanner_queue.InitializeScannerQueue(db); err != nil {
-		log.Panicf("Could not initialize scanner queue: %s\n", err)
+		log.Error(ctx, "Could not initialize scanner queue", "error", err)
+		os.Exit(255)
 	}
 
 	if err := periodic_scanner.InitializePeriodicScanner(db); err != nil {
-		log.Panicf("Could not initialize periodic scanner: %s", err)
+		log.Error(ctx, "Could not initialize periodic scanner", "error", err)
+		os.Exit(255)
 	}
 
 	if err := face_detection.InitializeFaceDetector(db); err != nil {
-		log.Panicf("Could not initialize face detector: %s\n", err)
+		log.Error(ctx, "Could not initialize face detector", "error", err)
+		os.Exit(255)
 	}
 
 	rootRouter := mux.NewRouter()
@@ -105,23 +118,24 @@ func main() {
 	if shouldServeUI {
 		spa, err := routes.NewSpaHandler(utils.UIPath(), "index.html")
 		if err != nil {
-			log.Panicf("Could not configure UI handler: %s", err)
+			log.Error(ctx, "Could not configure UI handler", "error", err)
+			os.Exit(255)
 		}
 		rootRouter.PathPrefix("/").Handler(spa)
 	}
 
 	if devMode {
-		log.Printf("🚀 Graphql playground ready at %s\n", apiListenURL.String())
+		log.Info(ctx, "🚀 Graphql playground ready", "url", apiListenURL.String())
 	} else {
-		log.Printf("Photoview API endpoint listening at %s\n", apiListenURL.String())
+		log.Info(ctx, "Photoview API endpoint listening", "url", apiListenURL.String())
 
 		apiEndpoint := utils.ApiEndpointUrl()
-		log.Printf("Photoview API public endpoint ready at %s\n", apiEndpoint.String())
+		log.Info(ctx, "Photoview API public endpoint ready", "endpoint", apiEndpoint.String())
 
-		logUIendpointURL()
+		logUIendpointURL(ctx)
 
 		if !shouldServeUI {
-			log.Printf("Notice: UI is not served by the API (%s=0)", utils.EnvServeUI.GetName())
+			log.Info(ctx, "Notice: UI is not served by the API", utils.EnvServeUI.GetName(), "0")
 		}
 	}
 
@@ -130,39 +144,41 @@ func main() {
 		Handler: rootRouter,
 	}
 
-	setupGracefulShutdown(srv)
+	setupGracefulShutdown(ctx, srv)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Panicf("HTTP server failed: %s", err)
+		log.Error(ctx, "HTTP server failed", "error", err)
+		os.Exit(255)
 	}
 }
 
-func setupGracefulShutdown(svr *http.Server) {
+func setupGracefulShutdown(ctx context.Context, svr *http.Server) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		<-c
-		log.Println("Shutting down Photoview...")
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute) // Wait for 1m to shutdown
+		ctx, cancel := context.WithTimeout(ctx, time.Minute) // Wait for 1m to shutdown
 		defer cancel()
+
+		log.Info(ctx, "Shutting down Photoview...")
 
 		// Shutdown scanners in correct order
 		periodic_scanner.ShutdownPeriodicScanner()
 		scanner_queue.CloseScannerQueue()
 
 		if err := svr.Shutdown(ctx); err != nil {
-			log.Printf("Server shutdown error: %s", err)
+			log.Error(ctx, "Server shutdown error", "error", err)
 		} else {
-			log.Println("Shutdown complete")
+			log.Info(ctx, "Shutdown complete")
 		}
 	}()
 }
 
-func logUIendpointURL() {
+func logUIendpointURL(ctx context.Context) {
 	if uiEndpoint := utils.UiEndpointUrl(); uiEndpoint != nil {
-		log.Printf("Photoview UI public endpoint ready at %s\n", uiEndpoint.String())
+		log.Info(nil, "Photoview UI public endpoint ready", "endpoint", uiEndpoint.String())
 	} else {
-		log.Println("Photoview UI public endpoint ready at /")
+		log.Info(nil, "Photoview UI public endpoint ready", "endpoint", "/")
 	}
 }

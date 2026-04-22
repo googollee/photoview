@@ -1,12 +1,14 @@
 package test_utils
 
 import (
+	"context"
 	"flag"
-	"log"
 	"os"
 	"testing"
 
 	"github.com/joho/godotenv"
+	"github.com/photoview/photoview/api/globalinit"
+	"github.com/photoview/photoview/api/log"
 	"github.com/photoview/photoview/api/scanner/externaltools/exif"
 	"github.com/photoview/photoview/api/scanner/media_encoding/executable_worker"
 	"github.com/photoview/photoview/api/test_utils/flags"
@@ -35,11 +37,13 @@ func IntegrationTestRun(m *testing.M) {
 
 	flag.Parse()
 
+	ctx := context.Background()
+
 	if flags.Database {
 		envPath := PathFromAPIRoot("testing.env")
 
 		if err := godotenv.Load(envPath); err != nil {
-			log.Println("No testing.env file found")
+			log.Warn(ctx, "No testing.env file found")
 		}
 	}
 	defer test_dbm.Close()
@@ -47,9 +51,17 @@ func IntegrationTestRun(m *testing.M) {
 	faceModelsPath := PathFromAPIRoot("data", "models")
 	utils.ConfigureTestFaceRecognitionModelsPath(faceModelsPath)
 
+	terminate, err := globalinit.Initialize(ctx)
+	defer terminate(ctx)
+	if err != nil {
+		log.Error(ctx, "initialize error", "errors", err)
+		return
+	}
+
 	exifCleanup, err := exif.Initialize()
 	if err != nil {
-		log.Panicf("init exif error: %v", err)
+		log.Error(ctx, "init exif error", "error", err)
+		return
 	}
 	defer exifCleanup()
 
