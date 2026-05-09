@@ -1,10 +1,9 @@
 package utils
 
 import (
-	"crypto/rand"
 	"fmt"
 	"log"
-	"math/big"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,16 +13,10 @@ func GenerateToken() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 8
 
-	charLen := big.NewInt(int64(len(charset)))
-
 	b := make([]byte, length)
 	for i := range b {
-
-		n, err := rand.Int(rand.Reader, charLen)
-		if err != nil {
-			log.Panicf("Could not generate random number: %v", err)
-		}
-		b[i] = charset[n.Int64()]
+		n := rand.Intn(len(charset))
+		b[i] = charset[n]
 	}
 	return string(b)
 }

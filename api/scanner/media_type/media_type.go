@@ -44,6 +44,9 @@ var (
 	TypeMPEG = mediaType("video/mpeg")
 	TypeOGG  = mediaType("video/ogg")
 	TypeWEBM = mediaType("video/webm")
+
+	// Sidecar formats
+	TypeXMP = mediaType("application/rdf+xml")
 )
 
 var webImageMimetypes = arrayToSet([]MediaType{

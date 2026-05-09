@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"time"
 
 	"github.com/photoview/photoview/api/database/drivers"
 	"github.com/photoview/photoview/api/database/migrations"
 	"github.com/photoview/photoview/api/graphql/models"
+	"github.com/photoview/photoview/api/log"
 	"github.com/photoview/photoview/api/utils"
 
 	"github.com/go-sql-driver/mysql"
@@ -20,6 +20,28 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+type dbKeyType string
+
+var dbKey dbKeyType = "db"
+
+func WithDB(ctx context.Context, db *gorm.DB) context.Context {
+	return context.WithValue(ctx, dbKey, db)
+}
+
+func DB(ctx context.Context) *gorm.DB {
+	v := ctx.Value(dbKey)
+	if v == nil {
+		return nil
+	}
+
+	db, ok := v.(*gorm.DB)
+	if !ok {
+		log.Warn(ctx, "Invalid DB type", "type", fmt.Sprintf("%T", v))
+	}
+
+	return db
+}
 
 func GetMysqlAddress(addressString string) (string, error) {
 	if addressString == "" {
@@ -69,15 +91,13 @@ func GetSqliteAddress(path string) (*url.URL, error) {
 	queryValues.Add("_foreign_keys", "ON")     // Enforc foreign key constraints.
 	address.RawQuery = queryValues.Encode()
 
-	// log.Panicf("%s", address.String())
-
 	return address, nil
 }
 
 func ConfigureDatabase(config *gorm.Config) (*gorm.DB, error) {
 	var databaseDialect gorm.Dialector
 	driver := drivers.DatabaseDriverFromEnv()
-	log.Printf("Utilizing %s database driver based on environment variables", driver)
+	log.Info(nil, "database driver based on environment variables", "driver", driver)
 
 	switch driver {
 	case drivers.MYSQL:
@@ -144,7 +164,7 @@ func SetupDatabase() (*gorm.DB, error) {
 			}
 		}
 
-		log.Printf("WARN: Could not ping database: %s. Will retry after 5 seconds\n", err)
+		log.Warn(nil, "Could not ping database. Will retry after 5 seconds", "error", err)
 		time.Sleep(time.Duration(5) * time.Second)
 	}
 
@@ -173,11 +193,11 @@ var database_models []interface{} = []interface{}{
 func MigrateDatabase(db *gorm.DB) error {
 
 	if err := db.SetupJoinTable(&models.User{}, "Albums", &models.UserAlbums{}); err != nil {
-		log.Printf("Setup UserAlbums join table failed: %v\n", err)
+		log.Error(nil, "Setup UserAlbums join table failed", "error", err)
 	}
 
 	if err := db.AutoMigrate(database_models...); err != nil {
-		log.Printf("Auto migration failed: %v\n", err)
+		log.Error(nil, "Auto migration failed", "error", err)
 	}
 
 	// v2.1.0 - Replaced by Media.CreatedAt
@@ -188,12 +208,12 @@ func MigrateDatabase(db *gorm.DB) error {
 	// v2.3.0 - Changed type of MediaEXIF.Exposure and MediaEXIF.Flash
 	// from string values to decimal and int respectively
 	if err := migrateExifFields(db); err != nil {
-		log.Printf("Failed to run exif fields migration: %v\n", err)
+		log.Error(nil, "Failed to run exif fields migration", "error", err)
 	}
 
 	// Remove invalid GPS data from DB
 	if err := migrations.MigrateForExifGPSCorrection(db); err != nil {
-		log.Printf("Failed to run exif GPS correction migration: %v\n", err)
+		log.Error(nil, "Failed to run exif GPS correction migration", "error", err)
 	}
 
 	// v2.5.0 - Remove Thumbnail Method for Downsampliing filters
